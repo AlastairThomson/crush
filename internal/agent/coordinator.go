@@ -532,11 +532,19 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		return nil, err
 	}
 
-	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+	// The agent's primary model (the one Model() returns and runSubAgent runs
+	// with) is its configured slot. Coder/task are "large", so their behavior
+	// is unchanged; custom agents may select "small".
+	primary := large
+	if agent.Model == config.SelectedModelTypeSmall {
+		primary = small
+	}
+
+	primaryProviderCfg, _ := c.cfg.Config().Providers.Get(primary.ModelCfg.Provider)
 	result := NewSessionAgent(SessionAgentOptions{
-		LargeModel:           large,
+		LargeModel:           primary,
 		SmallModel:           small,
-		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPromptPrefix:   primaryProviderCfg.SystemPromptPrefix,
 		SystemPrompt:         "",
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,

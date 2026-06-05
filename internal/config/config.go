@@ -261,6 +261,7 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 type Options struct {
 	ContextPaths         []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths          []string    `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
+	AgentsPaths          []string    `json:"agents_paths,omitempty" jsonschema:"description=Paths to directories containing custom sub-agent definitions (Markdown files with YAML frontmatter),example=~/.config/crush/agents,example=./.crush/agents"`
 	TUI                  *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
 	Debug                bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
@@ -514,6 +515,20 @@ type Agent struct {
 
 	// Overrides the context paths for this agent
 	ContextPaths []string `json:"context_paths,omitempty"`
+
+	// SystemPrompt is the system-prompt body for a custom (file-defined)
+	// sub-agent. Empty for the built-in coder/task agents, which source
+	// their prompt from embedded templates. Runtime-only.
+	SystemPrompt string `json:"-"`
+
+	// Skills lists the names of skills a custom sub-agent pre-loads in full
+	// at startup (resolved against discovered skills in the agent layer).
+	// Runtime-only.
+	Skills []string `json:"-"`
+
+	// Source is the path to the file a custom sub-agent was loaded from,
+	// for diagnostics. Empty for built-in agents. Runtime-only.
+	Source string `json:"-"`
 }
 
 type Tools struct {
@@ -731,6 +746,15 @@ func (c *Config) SetupAgents() {
 			AllowedMCP: map[string][]string{},
 		},
 	}
+
+	// Merge in user-defined custom sub-agents discovered from disk. Reserved
+	// ids (coder/task) are skipped by discoverCustomAgents, so they can never
+	// clobber the built-ins.
+	for _, agent := range discoverCustomAgents(c.Options.AgentsPaths, allowedTools) {
+		agent.ContextPaths = c.Options.ContextPaths
+		agents[agent.ID] = agent
+	}
+
 	c.Agents = agents
 }
 

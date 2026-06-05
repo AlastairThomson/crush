@@ -461,6 +461,16 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	// Project specific skills dirs.
 	c.Options.SkillsPaths = append(c.Options.SkillsPaths, ProjectSkillsDir(workingDir)...)
 
+	// Add the default custom sub-agent directories if not already present.
+	// Global dirs come first so project-level agents (appended after) win on
+	// name collision via discoverCustomAgents' last-wins merge.
+	for _, dir := range GlobalAgentsDirs() {
+		if !slices.Contains(c.Options.AgentsPaths, dir) {
+			c.Options.AgentsPaths = append(c.Options.AgentsPaths, dir)
+		}
+	}
+	c.Options.AgentsPaths = append(c.Options.AgentsPaths, ProjectAgentsDir(workingDir)...)
+
 	if str, ok := os.LookupEnv("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE"); ok {
 		c.Options.DisableProviderAutoUpdate, _ = strconv.ParseBool(str)
 	}
