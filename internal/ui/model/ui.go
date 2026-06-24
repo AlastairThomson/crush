@@ -533,6 +533,8 @@ func (m *UI) loadCustomCommands() tea.Cmd {
 			slog.Error("Failed to load skill commands", "error", err)
 		}
 		customCommands = append(customCommands, commands.FromSkillCatalog(skillEntries)...)
+		// Append custom sub-agents as commands for explicit invocation.
+		customCommands = append(customCommands, commands.FromAgentCatalog(m.com.Config().Agents)...)
 		return userCommandsLoadedMsg{Commands: customCommands}
 	}
 }
@@ -1616,6 +1618,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionAttachSkill:
 		m.dialog.CloseFrontDialog()
 		cmds = append(cmds, m.attachSkill(msg.ID, msg.Name))
+	case dialog.ActionInvokeAgent:
+		m.dialog.CloseFrontDialog()
+		directive := fmt.Sprintf("Use the %q sub-agent (subagent_type: %s) for the following:\n\n", msg.Name, msg.Name)
+		cmds = append(cmds, func() tea.Msg {
+			return openEditorMsg{Text: directive}
+		})
 	case dialog.ActionRunMCPPrompt:
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()

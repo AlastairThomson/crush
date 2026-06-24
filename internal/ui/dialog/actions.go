@@ -83,6 +83,12 @@ type (
 		ID   string
 		Name string
 	}
+	// ActionInvokeAgent is sent when a custom sub-agent is selected from the
+	// commands dialog. It pre-fills the editor with a delegation directive
+	// that routes through the agent tool.
+	ActionInvokeAgent struct {
+		Name string
+	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
 		Title       string

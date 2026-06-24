@@ -391,9 +391,12 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 	case UserCommands:
 		for _, cmd := range c.customCommands {
 			var action Action
-			if cmd.Skill != nil {
+			switch {
+			case cmd.AgentName != "":
+				action = ActionInvokeAgent{Name: cmd.AgentName}
+			case cmd.Skill != nil:
 				action = ActionAttachSkill{ID: cmd.Skill.SkillFilePath, Name: cmd.Skill.Name}
-			} else {
+			default:
 				action = ActionRunCustomCommand{
 					Content:   cmd.Content,
 					Arguments: cmd.Arguments,
@@ -401,7 +404,10 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				}
 			}
 			item := NewCommandItem(c.com.Styles, "custom_"+cmd.ID, cmd.Name, "", action)
-			if cmd.Skill != nil {
+			switch {
+			case cmd.AgentName != "":
+				item = item.WithDescription(cmd.Description)
+			case cmd.Skill != nil:
 				item = item.WithDescription(cmd.Skill.Description)
 			}
 			commandItems = append(commandItems, item)

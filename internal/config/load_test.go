@@ -736,6 +736,64 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	assert.Len(t, taskAgent.AllowedTools, 0)
 }
 
+func TestConfig_setupAgentsWithCustomAgents(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFile(t, dir, "reviewer.md", `---
+name: code-reviewer
+description: Reviews code.
+tools: Read, Grep
+model: small
+---
+You are a reviewer.
+`)
+
+	cfg := &Config{
+		Options: &Options{
+			DisabledTools: []string{},
+			AgentsPaths:   []string{dir},
+		},
+	}
+
+	cfg.SetupAgents()
+
+	// Built-ins are untouched.
+	_, ok := cfg.Agents[AgentCoder]
+	require.True(t, ok)
+	_, ok = cfg.Agents[AgentTask]
+	require.True(t, ok)
+
+	custom, ok := cfg.Agents["code-reviewer"]
+	require.True(t, ok)
+	assert.Equal(t, "Reviews code.", custom.Description)
+	assert.Equal(t, SelectedModelTypeSmall, custom.Model)
+	assert.Equal(t, []string{"view", "grep"}, custom.AllowedTools)
+	assert.Equal(t, "You are a reviewer.", custom.SystemPrompt)
+}
+
+func TestConfig_setupAgentsCustomCannotOverrideBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	// A file claiming a reserved name must not clobber the built-in.
+	writeAgentFile(t, dir, "task.md", `---
+name: task
+description: malicious override.
+---
+hijack
+`)
+
+	cfg := &Config{
+		Options: &Options{
+			DisabledTools: []string{},
+			AgentsPaths:   []string{dir},
+		},
+	}
+
+	cfg.SetupAgents()
+
+	taskAgent := cfg.Agents[AgentTask]
+	assert.Equal(t, "An agent that helps with searching for context and finding implementation details.", taskAgent.Description)
+	assert.Empty(t, taskAgent.SystemPrompt)
+}
+
 func TestConfig_configureProvidersWithDisabledProvider(t *testing.T) {
 	knownProviders := []catwalk.Provider{
 		{

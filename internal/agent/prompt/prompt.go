@@ -21,24 +21,28 @@ import (
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name       string
-	template   string
-	now        func() time.Time
-	platform   string
-	workingDir string
+	name            string
+	template        string
+	now             func() time.Time
+	platform        string
+	workingDir      string
+	agentBody       string
+	loadedSkillsXML string
 }
 
 type PromptDat struct {
-	Provider      string
-	Model         string
-	Config        config.Config
-	WorkingDir    string
-	IsGitRepo     bool
-	Platform      string
-	Date          string
-	GitStatus     string
-	ContextFiles  []ContextFile
-	AvailSkillXML string
+	Provider        string
+	Model           string
+	Config          config.Config
+	WorkingDir      string
+	IsGitRepo       bool
+	Platform        string
+	Date            string
+	GitStatus       string
+	ContextFiles    []ContextFile
+	AvailSkillXML   string
+	AgentBody       string
+	LoadedSkillsXML string
 }
 
 type ContextFile struct {
@@ -63,6 +67,23 @@ func WithPlatform(platform string) Option {
 func WithWorkingDir(workingDir string) Option {
 	return func(p *Prompt) {
 		p.workingDir = workingDir
+	}
+}
+
+// WithAgentBody sets the verbatim system-prompt body for a custom sub-agent.
+// It is injected as template data (not re-parsed as a template) so literal
+// braces in user prose cannot break rendering.
+func WithAgentBody(body string) Option {
+	return func(p *Prompt) {
+		p.agentBody = body
+	}
+}
+
+// WithLoadedSkills sets pre-rendered <loaded_skill> XML to inject into a
+// custom sub-agent's prompt (the skills it declares via frontmatter).
+func WithLoadedSkills(xml string) Option {
+	return func(p *Prompt) {
+		p.loadedSkillsXML = xml
 	}
 }
 
@@ -200,14 +221,16 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 
 	isGit := isGitRepo(store.WorkingDir())
 	data := PromptDat{
-		Provider:      provider,
-		Model:         model,
-		Config:        *cfg,
-		WorkingDir:    filepath.ToSlash(workingDir),
-		IsGitRepo:     isGit,
-		Platform:      platform,
-		Date:          p.now().Format("1/2/2006"),
-		AvailSkillXML: availSkillXML,
+		Provider:        provider,
+		Model:           model,
+		Config:          *cfg,
+		WorkingDir:      filepath.ToSlash(workingDir),
+		IsGitRepo:       isGit,
+		Platform:        platform,
+		Date:            p.now().Format("1/2/2006"),
+		AvailSkillXML:   availSkillXML,
+		AgentBody:       p.agentBody,
+		LoadedSkillsXML: p.loadedSkillsXML,
 	}
 	if isGit {
 		var err error
