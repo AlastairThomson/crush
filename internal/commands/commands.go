@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +49,10 @@ type CustomCommand struct {
 	Arguments []Argument
 	// Skill is set when this command represents a user-invocable skill
 	Skill *skills.Skill
+	// AgentName is set when this command represents a custom sub-agent.
+	AgentName string
+	// Description is shown in the palette for skill/agent commands.
+	Description string
 }
 
 type commandSource struct {
@@ -84,6 +89,27 @@ func FromSkillCatalog(entries []skills.CatalogEntry) []CustomCommand {
 		})
 	}
 	return commands
+}
+
+// FromAgentCatalog converts custom sub-agents into command-palette entries.
+// Selecting one pre-fills the editor with a delegation directive that routes
+// through the agent tool. The built-in coder/task agents are excluded.
+func FromAgentCatalog(agents map[string]config.Agent) []CustomCommand {
+	cmds := make([]CustomCommand, 0, len(agents))
+	for id, agent := range agents {
+		if id == config.AgentCoder || id == config.AgentTask || agent.Disabled {
+			continue
+		}
+		name := "agent:" + id
+		cmds = append(cmds, CustomCommand{
+			ID:          name,
+			Name:        name,
+			AgentName:   id,
+			Description: agent.Description,
+		})
+	}
+	sort.Slice(cmds, func(i, j int) bool { return cmds[i].ID < cmds[j].ID })
+	return cmds
 }
 
 // LoadMCPPrompts loads custom commands from available MCP servers.
