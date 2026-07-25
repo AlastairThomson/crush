@@ -222,13 +222,13 @@ func (b *Backend) EnableDockerMCP(ctx context.Context, workspaceID string) error
 
 	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, ws.Cfg); err != nil {
 		disableErr := mcptools.DisableSingle(ws.Cfg, config.DockerMCPName)
-		delete(ws.Cfg.Config().MCP, config.DockerMCPName)
+		ws.Cfg.RemoveDockerMCPInMemory()
 		return fmt.Errorf("failed to start docker MCP: %w", errors.Join(err, disableErr))
 	}
 
 	if err := ws.Cfg.PersistDockerMCPConfig(mcpConfig); err != nil {
 		disableErr := mcptools.DisableSingle(ws.Cfg, config.DockerMCPName)
-		delete(ws.Cfg.Config().MCP, config.DockerMCPName)
+		ws.Cfg.RemoveDockerMCPInMemory()
 		return fmt.Errorf("docker MCP started but failed to persist configuration: %w", errors.Join(err, disableErr))
 	}
 
@@ -295,6 +295,37 @@ func (b *Backend) GetMCPPrompt(workspaceID, clientID, promptID string, args map[
 		return "", err
 	}
 	return commands.GetMCPPrompt(ws.Cfg, clientID, promptID, args)
+}
+
+func (b *Backend) ListMCPPrompts(workspaceID string) ([]proto.MCPPrompt, error) {
+	if _, err := b.GetWorkspace(workspaceID); err != nil {
+		return nil, err
+	}
+	prompts, err := commands.LoadMCPPrompts()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]proto.MCPPrompt, len(prompts))
+	for i, prompt := range prompts {
+		arguments := make([]proto.MCPPromptArgument, len(prompt.Arguments))
+		for j, argument := range prompt.Arguments {
+			arguments[j] = proto.MCPPromptArgument{
+				ID:          argument.ID,
+				Title:       argument.Title,
+				Description: argument.Description,
+				Required:    argument.Required,
+			}
+		}
+		result[i] = proto.MCPPrompt{
+			ID:          prompt.ID,
+			Title:       prompt.Title,
+			Description: prompt.Description,
+			PromptID:    prompt.PromptID,
+			ClientID:    prompt.ClientID,
+			Arguments:   arguments,
+		}
+	}
+	return result, nil
 }
 
 // GetWorkingDir returns the working directory for a workspace.

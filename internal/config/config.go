@@ -95,7 +95,7 @@ type ProviderConfig struct {
 	// The provider's API endpoint.
 	BaseURL string `json:"base_url,omitempty" jsonschema:"description=Base URL for the provider's API,format=uri,example=https://api.openai.com/v1"`
 	// The provider type, e.g. "openai", "anthropic", etc. if empty it defaults to openai.
-	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,enum=openai,enum=openai-compat,enum=anthropic,enum=gemini,enum=azure,enum=vertexai,default=openai"`
+	Type catwalk.Type `json:"type,omitempty" jsonschema:"description=Provider type that determines the API format,default=openai"`
 	// The provider's API key.
 	APIKey string `json:"api_key,omitempty" jsonschema:"description=API key for authentication with the provider,example=$OPENAI_API_KEY"`
 	// The original API key template before resolution (for re-resolution on auth errors).
@@ -132,6 +132,13 @@ type ProviderConfig struct {
 
 	// Skip cost accumulation for this provider when using subscription or flat rate billing.
 	FlatRate bool `json:"flat_rate,omitempty" jsonschema:"description=Flat-rate mode for this provider"`
+
+	// AutoDiscoverModels controls model discovery via /v1/models endpoint.
+	// When Models is empty and this is nil or true, Crush auto-discovers
+	// models. When true and Models is non-empty, discovered models are
+	// merged in (user-specified models take precedence). When false,
+	// only explicitly listed models are used.
+	AutoDiscoverModels *bool `json:"discover_models,omitempty" jsonschema:"description=Auto-discover models from /v1/models endpoint. When true with existing models they are merged (yours win),default=true"`
 
 	// The provider models
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
@@ -197,6 +204,40 @@ type MCPConfig struct {
 	// omitted from the outgoing request rather than sent as
 	// "Header:".
 	Headers map[string]string `json:"headers,omitempty" jsonschema:"description=HTTP headers for HTTP/SSE MCP servers"`
+
+	// OAuth enables the MCP OAuth 2.1 authorization flow for HTTP
+	// transport servers. When true, the client uses dynamic client
+	// registration and opens a browser for the user to authorize.
+	// Tokens are persisted automatically. Only supported for type=http.
+	OAuth bool `json:"oauth,omitempty" jsonschema:"description=Enable OAuth 2.1 authorization flow for this MCP server (HTTP transport only),default=false"`
+
+	// OAuthClientID is an optional pre-registered OAuth client ID. Set
+	// it for servers that do not support dynamic client registration
+	// (e.g. GitHub, Slack) and instead issue client credentials when you
+	// register an OAuth app. Values run through shell expansion, so
+	// $VAR and $(cmd) work.
+	OAuthClientID string `json:"oauth_client_id,omitempty" jsonschema:"description=Pre-registered OAuth client ID for servers without dynamic client registration"`
+
+	// OAuthClientSecret is the optional secret paired with
+	// OAuthClientID for confidential clients. Values run through shell
+	// expansion, so $VAR and $(cmd) work.
+	OAuthClientSecret string `json:"oauth_client_secret,omitempty" jsonschema:"description=Pre-registered OAuth client secret paired with oauth_client_id"`
+
+	// OAuthCallbackPort pins the localhost port used for the OAuth
+	// redirect listener. Set this when the OAuth provider requires an
+	// exact-match callback URL (e.g. GitHub OAuth Apps). When omitted,
+	// Crush picks the first free port from its default range.
+	OAuthCallbackPort int `json:"oauth_callback_port,omitempty" jsonschema:"description=Fixed localhost port for the OAuth callback, required by providers that enforce exact-match redirect URIs"`
+
+	// OAuthToken is the persisted OAuth token for this server. It is
+	// managed internally and stored in the global data config.
+	OAuthToken *oauth.Token `json:"oauth_token,omitempty" jsonschema:"-"`
+}
+
+// isOrphanedToken reports whether this entry is a leftover OAuth token
+// with no real server config.
+func (m MCPConfig) isOrphanedToken() bool {
+	return m.Type == "" && m.Command == "" && m.URL == "" && m.OAuthToken != nil
 }
 
 type LSPConfig struct {
@@ -219,6 +260,7 @@ type TUIOptions struct {
 
 	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
 	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Scrollbar   string      `json:"scrollbar,omitempty" jsonschema:"description=Chat scrollbar visibility,enum=default,enum=always,enum=never,default=default"`
 }
 
 // Completions defines options for the completions UI.
@@ -230,6 +272,13 @@ type Completions struct {
 func (c Completions) Limits() (depth, items int) {
 	return ptrValOr(c.MaxDepth, 0), ptrValOr(c.MaxItems, 0)
 }
+
+// Scrollbar visibility options.
+const (
+	ScrollbarDefault = "default" // Auto-hide after 2 seconds
+	ScrollbarAlways  = "always"  // Always show when content exceeds viewport
+	ScrollbarNever   = "never"   // Never show scrollbar
+)
 
 type Permissions struct {
 	AllowedTools []string `json:"allowed_tools,omitempty" jsonschema:"description=List of tools that don't require permission prompts,example=bash,example=view"`
@@ -260,6 +309,7 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 
 type Options struct {
 	ContextPaths         []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
+	GlobalContextPaths   []string    `json:"global_context_paths,omitempty" jsonschema:"description=Paths to files containing global context information for the AI,default=~/.config/crush/CRUSH.md,default=~/.config/AGENTS.md"`
 	SkillsPaths          []string    `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
 	AgentsPaths          []string    `json:"agents_paths,omitempty" jsonschema:"description=Paths to directories containing custom sub-agent definitions (Markdown files with YAML frontmatter),example=~/.config/crush/agents,example=./.crush/agents"`
 	TUI                  *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
@@ -534,6 +584,7 @@ type Agent struct {
 type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
+	Glob ToolGlob `json:"glob,omitzero"`
 }
 
 type ToolLs struct {
@@ -555,17 +606,37 @@ func (t ToolGrep) GetTimeout() time.Duration {
 	return ptrValOr(t.Timeout, 5*time.Second)
 }
 
+type ToolGlob struct {
+	Timeout *time.Duration `json:"timeout,omitempty" jsonschema:"description=Timeout for the glob tool call,default=30s,example=10s"`
+}
+
+// GetTimeout returns the user-defined timeout or the default.
+func (t ToolGlob) GetTimeout() time.Duration {
+	return ptrValOr(t.Timeout, 30*time.Second)
+}
+
 // HookConfig defines a user-configured shell command that fires on a hook
 // event (e.g. PreToolUse). This is a pure-data struct: matcher compilation
 // is owned by hooks.Runner so a JSON round-trip, merge, or reload can't
 // silently drop compiled state.
 type HookConfig struct {
+	// Friendly display name shown in the TUI. Falls back to Command when empty.
+	Name string `json:"name,omitempty" jsonschema:"description=Friendly display name shown in the TUI for this hook"`
 	// Regex pattern tested against the tool name. Empty means match all.
 	Matcher string `json:"matcher,omitempty" jsonschema:"description=Regex pattern tested against the tool name. Empty means match all tools."`
 	// Shell command to execute.
 	Command string `json:"command" jsonschema:"required,description=Shell command to execute when the hook fires"`
 	// Timeout in seconds. Default 30.
 	Timeout int `json:"timeout,omitempty" jsonschema:"description=Timeout in seconds for the hook command,default=30"`
+}
+
+// DisplayName returns the hook name for display purposes. It returns Name
+// when set, otherwise falls back to Command.
+func (h *HookConfig) DisplayName() string {
+	if h.Name != "" {
+		return h.Name
+	}
+	return h.Command
 }
 
 // TimeoutDuration returns the hook timeout as a time.Duration, defaulting
@@ -603,6 +674,45 @@ type Config struct {
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
 	Agents map[string]Agent `json:"-"`
+}
+
+// cloneForWrite returns a copy of c that the store's typed field mutators
+// may modify without racing readers of the currently published Config.
+//
+// Reads of a published Config take no lock beyond the pointer load, so a
+// mutator must never write through the live pointer. Instead it clones,
+// mutates the clone, and atomically swaps it in. The clone gives fresh
+// copies of every field a typed mutator touches in place — Models,
+// RecentModels, MCP, and Options (with its nested TUI pointer). Providers
+// is a *csync.Map (internally synchronized) and is shared by reference;
+// the remaining fields are immutable after load from the mutators'
+// standpoint and are likewise shared.
+func (c *Config) cloneForWrite() *Config {
+	nc := *c
+	nc.Models = maps.Clone(c.Models)
+	nc.RecentModels = maps.Clone(c.RecentModels)
+	nc.MCP = maps.Clone(c.MCP)
+	if c.Options != nil {
+		opts := *c.Options
+		if c.Options.TUI != nil {
+			tui := *c.Options.TUI
+			opts.TUI = &tui
+		}
+		nc.Options = &opts
+	}
+	return &nc
+}
+
+// ensureTUI returns c.Options.TUI, allocating Options and TUI as needed so
+// callers can assign TUI fields without nil checks.
+func (c *Config) ensureTUI() *TUIOptions {
+	if c.Options == nil {
+		c.Options = &Options{}
+	}
+	if c.Options.TUI == nil {
+		c.Options.TUI = &TUIOptions{}
+	}
+	return c.Options.TUI
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -682,11 +792,17 @@ func allToolNames() []string {
 		"lsp_diagnostics",
 		"lsp_references",
 		"lsp_restart",
+		"lsp_symbols",
+		"lsp_definition",
+		"lsp_call_hierarchy",
+		"lsp_rename",
+		"lsp_replace_symbol",
 		"fetch",
 		"agentic_fetch",
 		"glob",
 		"grep",
 		"ls",
+		"question",
 		"sourcegraph",
 		"todos",
 		"view",
@@ -705,7 +821,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
+	readOnlyTools := []string{"glob", "grep", "ls", "lsp_call_hierarchy", "lsp_definition", "lsp_symbols", "sourcegraph", "view"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }

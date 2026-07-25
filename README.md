@@ -173,27 +173,39 @@ go install github.com/charmbracelet/crush@latest
 
 ## Getting Started
 
-The quickest way to get started is to grab an API key for your preferred
-provider such as Anthropic, OpenAI, Groq, OpenRouter, or Vercel AI Gateway and just start
-Crush. You'll be prompted to enter your API key.
+The quickest way to get started is to choose a [Hyper][hyper] model from model
+picker. Follow the steps to authenticate and you'll be good to go.
 
-That said, you can also set environment variables for preferred providers.
+[Hyper], from Charm, is the official Crush provider. It’s subscription-based,
+with a free tier, and optimized for Crush. It’s privacy focused, with zero data
+retention (ZDR) is and designed to comply with GDPR. [More on Hyper][hyper].
+
+<p><a href="https://hyper.charm.land"><img width="340" height="200" alt="Charm Hyper" src="https://github.com/user-attachments/assets/50875289-7992-454d-9f14-9f790413fb5e" /></a></p>
+
+## API Keys
+
+You can also use Crush with many other providers such as Anthopic, OpenAI,
+Gemini, OpenRouter and so on. Press <kbd>ctrl+l</kbd> to open the model picker,
+choose the provider of your choice, and paste your API key.
+
+That said, you can also set environment variables for preferred providers:
 
 | Environment Variable        | Provider                                           |
 | --------------------------- | -------------------------------------------------- |
-| `HYPER_API_KEY`             | Charm Hyper                                        |
+| `HYPER_API_KEY`             | [Charm Hyper][hyper]                               |
 | `ANTHROPIC_API_KEY`         | Anthropic                                          |
 | `OPENAI_API_KEY`            | OpenAI                                             |
 | `VERCEL_API_KEY`            | Vercel AI Gateway                                  |
 | `GEMINI_API_KEY`            | Google Gemini                                      |
-| `SYNTHETIC_API_KEY`         | Synthetic                                          |
 | `ZAI_API_KEY`               | Z.ai                                               |
 | `MINIMAX_API_KEY`           | MiniMax                                            |
+| `SYNTHETIC_API_KEY`         | Synthetic                                          |
 | `HF_TOKEN`                  | Hugging Face Inference                             |
 | `CEREBRAS_API_KEY`          | Cerebras                                           |
 | `OPENROUTER_API_KEY`        | OpenRouter                                         |
 | `IONET_API_KEY`             | io.net                                             |
 | `ALIBABA_SINGAPORE_API_KEY` | Alibaba (Singapore)                                |
+| `ALIBABA_US_API_KEY`        | Alibaba (United States)                            |
 | `GROQ_API_KEY`              | Groq                                               |
 | `AVIAN_API_KEY`             | Avian                                              |
 | `OPENCODE_API_KEY`          | OpenCode Zen & Go                                  |
@@ -207,16 +219,13 @@ That said, you can also set environment variables for preferred providers.
 | `AZURE_OPENAI_API_ENDPOINT` | Azure OpenAI models                                |
 | `AZURE_OPENAI_API_KEY`      | Azure OpenAI models (optional when using Entra ID) |
 | `AZURE_OPENAI_API_VERSION`  | Azure OpenAI models                                |
+| `MOONSHOT_API_KEY`          | Moonshot                                           |
 
-### Subscriptions
+[hyper]: https://hyper.charm.land
 
-If you prefer subscription-based usage, here are some plans that work well in
-Crush:
-
-- [Synthetic](https://synthetic.new/pricing)
-- [GLM Coding Plan](https://z.ai/subscribe)
-- [Kimi Code](https://www.kimi.com/membership/pricing)
-- [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
+Also note that Crush can support nearly any provider, including
+[Local Models](#local-models). For more info see
+[Custom Providers](#custom-providers) below.
 
 ### By the Way
 
@@ -363,6 +372,50 @@ which do expand.
 }
 ```
 
+#### MCP OAuth
+
+HTTP and SSE MCP servers that require OAuth can use Crush's built-in
+authorization-code flow instead of a static `Authorization` header. Set
+`"oauth": true` to enable it:
+
+```json
+{
+  "mcp": {
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp",
+      "oauth": true
+    }
+  }
+}
+```
+
+##### Pre-registered clients
+
+Some servers (GitHub, Slack) don't support dynamic client registration.
+For those, register an OAuth app with the provider and supply the
+credentials directly. All values support shell expansion:
+
+```json
+{
+  "mcp": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "oauth": true,
+      "oauth_client_id": "Iv1.abc123def456",
+      "oauth_client_secret": "$GITHUB_MCP_SECRET",
+      "oauth_callback_port": 40704
+    }
+  }
+}
+```
+
+When `oauth_client_id` is set, Crush skips dynamic client registration
+and authenticates as the specified client. When omitted, Crush attempts
+dynamic registration automatically (works with Linear, Notion, and other
+servers that support RFC 7591).
+
 ### Hooks
 
 Crush has preliminary support for hooks. For details, see
@@ -401,6 +454,33 @@ open against it. When the last stream disconnects, the workspace is torn
 down. There is a short grace window right after `POST /v1/workspaces` so a
 client that has created the workspace but not yet opened its event stream
 does not get reaped before it can attach.
+
+### Global context files
+
+Crush automatically includes two files for cross-project instructions.
+
+- `~/.config/crush/CRUSH.md`: Crush-specific rules that would confuse other
+  agentic coding tools. If you only use Crush, this is the only one you need to
+  edit.
+- `~/.config/AGENTS.md`: generic instructions that other coding tools might
+  read. Avoid referring to Crush-specific features or workflows here. You
+  probably only care about this if you use multiple agentic coding tools and
+  want to share instructions between them.
+
+You can customize these paths using the `global_context_paths` option in your
+configuration:
+
+```jsonc
+{
+  "$schema": "https://charm.land/crush.json",
+  "options": {
+    "global_context_paths": [
+      "~/path/to/custom/context/file.md",
+      "/full/path/to/folder/of/files/" // recursively load all .md files in folder
+    ]
+  }
+}
+```
 
 ### Ignoring Files
 
@@ -743,9 +823,10 @@ To add specific models to the configuration, configure as such:
 
 ### Local Models
 
-Local models can also be configured via OpenAI-compatible API. Here are two common examples:
-
-#### Ollama
+Crush can auto-discovers models from local providers. Add a custom provider
+with `type` set to `llamacpp`, `omlx`, `lmstudio`, `litellm`, or `ollama`
+and leave out the models list. Crush will populate the model list
+automatically.
 
 ```json
 {
@@ -753,7 +834,41 @@ Local models can also be configured via OpenAI-compatible API. Here are two comm
     "ollama": {
       "name": "Ollama",
       "base_url": "http://localhost:11434/v1/",
-      "type": "openai-compat",
+      "type": "ollama"
+    }
+  }
+}
+```
+
+For llama.cpp (`llama-server`), point at the server's base URL:
+
+```json
+{
+  "providers": {
+    "llamacpp": {
+      "name": "llama.cpp",
+      "base_url": "http://localhost:2222",
+      "type": "llamacpp"
+    }
+  }
+}
+```
+
+#### Manual Model Configuration
+
+You can still list models explicitly. User-defined models always take
+precedence over discovered ones, and any fields you set won't be overwritten
+by auto-discovery. Auto discovery will run if the model list is empty for any
+`openai-compat` provider or if you pass `"discover_models": true` it will merge
+ the found models with your hand configured ones.
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "name": "Ollama",
+      "base_url": "http://localhost:11434/v1/",
+      "type": "ollama",
       "models": [
         {
           "name": "Qwen 3 30B",
@@ -761,29 +876,8 @@ Local models can also be configured via OpenAI-compatible API. Here are two comm
           "context_window": 256000,
           "default_max_tokens": 20000
         }
-      ]
-    }
-  }
-}
-```
-
-#### LM Studio
-
-```json
-{
-  "providers": {
-    "lmstudio": {
-      "name": "LM Studio",
-      "base_url": "http://localhost:1234/v1/",
-      "type": "openai-compat",
-      "models": [
-        {
-          "name": "Qwen 3 30B",
-          "id": "qwen/qwen3-30b-a3b-2507",
-          "context_window": 256000,
-          "default_max_tokens": 20000
-        }
-      ]
+      ],
+      "discover_models": true
     }
   }
 }
